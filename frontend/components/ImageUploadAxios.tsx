@@ -11,12 +11,12 @@
  */
 
 import { useState, useRef } from 'react';
-import axios, { AxiosError } from 'axios';
 
 interface AnalysisResult {
-  result: 'clean' | 'tumor' | 'no_tumor';
+  prediction: 'Normal' | 'Tumor';
   confidence: number;
-  message?: string;
+  class_index?: number;
+  error?: string | null;
 }
 
 interface ImageUploadAxiosProps {
@@ -123,7 +123,7 @@ export default function ImageUploadAxios({
   };
 
   /**
-   * Handle upload using Axios
+   * Handle upload using fetch
    */
   const handleAnalyze = async () => {
     if (!file) {
@@ -136,46 +136,27 @@ export default function ImageUploadAxios({
 
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('image', file);
 
-      // Using Axios with progress tracking capability
-      const response = await axios.post<AnalysisResult>(
-        `${apiBaseUrl}/api/analyze/`,
-        formData,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-          timeout: 30000, // 30 second timeout
-        }
-      );
+      const response = await fetch(`${apiBaseUrl}/api/predict/`, {
+        method: 'POST',
+        body: formData,
+      });
 
-      const data = response.data;
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(
+          errorData.error ||
+            `Server error: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const data: AnalysisResult = await response.json();
       setResult(data);
       onAnalysisComplete?.(data);
     } catch (err) {
-      let errorMessage = 'Unknown error occurred';
-
-      if (axios.isAxiosError(err)) {
-        const axiosError = err as AxiosError<{ error: string }>;
-        
-        if (axiosError.response?.status === 400) {
-          errorMessage = axiosError.response.data?.error || 'Invalid request (400)';
-        } else if (axiosError.response?.status === 404) {
-          errorMessage = 'Endpoint not found (404). Is the backend running?';
-        } else if (axiosError.response?.status === 500) {
-          errorMessage = 'Server error (500). Check backend logs.';
-        } else if (axiosError.code === 'ECONNABORTED') {
-          errorMessage = 'Request timeout. Backend took too long to respond.';
-        } else if (axiosError.message === 'Network Error') {
-          errorMessage = 'Network error. Cannot reach the backend.';
-        } else {
-          errorMessage = axiosError.message;
-        }
-      } else if (err instanceof Error) {
-        errorMessage = err.message;
-      }
-
+      const errorMessage =
+        err instanceof Error ? err.message : 'Unknown error occurred';
       setError(
         `Failed to analyze image: ${errorMessage}. Make sure the backend is running at ${apiBaseUrl}`
       );
@@ -279,15 +260,15 @@ export default function ImageUploadAxios({
 
           <div className="space-y-3">
             <div className="flex justify-between items-center">
-              <span className="text-gray-700">Status:</span>
+              <span className="text-gray-700">Diagnosis:</span>
               <span
                 className={`font-semibold px-3 py-1 rounded ${
-                  result.result === 'clean' || result.result === 'no_tumor'
+                  result.prediction === 'Normal'
                     ? 'bg-green-200 text-green-900'
                     : 'bg-red-200 text-red-900'
                 }`}
               >
-                {result.result.toUpperCase()}
+                {result.prediction.toUpperCase()}
               </span>
             </div>
 
@@ -305,14 +286,14 @@ export default function ImageUploadAxios({
                   />
                 </div>
                 <span className="font-semibold text-gray-900 min-w-fit">
-                  {(result.confidence * 100).toFixed(1)}%
+                  {(result.confidence * 100).toFixed(2)}%
                 </span>
               </div>
             </div>
 
-            {result.message && (
+            {result.error && (
               <div className="pt-3 border-t border-green-200">
-                <p className="text-sm text-gray-600">{result.message}</p>
+                <p className="text-sm text-red-600">Error: {result.error}</p>
               </div>
             )}
           </div>
