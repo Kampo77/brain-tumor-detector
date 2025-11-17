@@ -140,7 +140,7 @@ export default function ImageUploadAxios({
 
       // Using Axios with progress tracking capability
       const response = await axios.post<AnalysisResult>(
-        `${apiBaseUrl}/analyze/`,
+        `${apiBaseUrl}/api/analyze/`,
         formData,
         {
           headers: {

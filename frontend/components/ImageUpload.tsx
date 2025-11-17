@@ -143,7 +143,7 @@ export default function ImageUpload({
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${apiBaseUrl}/analyze/`, {
+      const response = await fetch(`${apiBaseUrl}/api/analyze/`, {
         method: 'POST',
         body: formData,
         // Note: Don't set Content-Type header; browser will set it automatically
