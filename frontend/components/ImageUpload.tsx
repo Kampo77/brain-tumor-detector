@@ -3,9 +3,10 @@
 import { useState, useRef } from 'react';
 
 interface AnalysisResult {
-  result: 'clean' | 'tumor' | 'no_tumor';
+  prediction: 'Normal' | 'Tumor';
   confidence: number;
-  message?: string;
+  class_index?: number;
+  error?: string | null;
 }
 
 interface ImageUploadProps {
@@ -22,176 +23,114 @@ export default function ImageUpload({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Valid image and medical file extensions
   const VALID_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'dcm'];
-  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+  const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
-  /**
-   * Validate file before upload
-   */
   const validateFile = (file: File): string | null => {
-    // Check file size
-    if (file.size > MAX_FILE_SIZE) {
-      return `File size must be less than ${MAX_FILE_SIZE / 1024 / 1024}MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`;
-    }
-
-    // Check file extension
+    if (file.size > MAX_FILE_SIZE) return 'File too large';
     const fileName = file.name.toLowerCase();
-    const hasValidExtension = VALID_EXTENSIONS.some((ext) =>
-      fileName.endsWith(`.${ext}`)
-    );
-
-    if (!hasValidExtension) {
-      return `Invalid file type. Supported formats: ${VALID_EXTENSIONS.join(', ').toUpperCase()}`;
-    }
-
-    return null;
+    const hasValid = VALID_EXTENSIONS.some((ext) => fileName.endsWith(`.${ext}`));
+    return hasValid ? null : 'Invalid file type';
   };
 
-  /**
-   * Handle file selection
-   */
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
-
-    // Validate file
-    const validationError = validateFile(selectedFile);
-    if (validationError) {
-      setError(validationError);
+    const err = validateFile(selectedFile);
+    if (err) {
+      setError(err);
       setFile(null);
       setPreview(null);
       return;
     }
-
     setError(null);
     setFile(selectedFile);
-    setResult(null); // Clear previous results
-
-    // Create preview for image files (not for DICOM)
+    setResult(null);
     if (!selectedFile.name.toLowerCase().endsWith('.dcm')) {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        setPreview(e.target?.result as string);
-      };
+      reader.onload = (e) => setPreview(e.target?.result as string);
       reader.readAsDataURL(selectedFile);
     } else {
-      setPreview(null); // DICOM files don't have easy preview
+      setPreview(null);
     }
   };
 
-  /**
-   * Handle drag and drop
-   */
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    e.stopPropagation();
+    setIsDragging(true);
   };
 
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
+  const handleDragLeave = () => setIsDragging(false);
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    e.stopPropagation();
-
+    setIsDragging(false);
     const droppedFile = e.dataTransfer.files?.[0];
     if (!droppedFile) return;
-
-    // Validate file
-    const validationError = validateFile(droppedFile);
-    if (validationError) {
-      setError(validationError);
-      setFile(null);
-      setPreview(null);
+    const err = validateFile(droppedFile);
+    if (err) {
+      setError(err);
       return;
     }
-
     setError(null);
     setFile(droppedFile);
     setResult(null);
-
-    // Create preview for image files
     if (!droppedFile.name.toLowerCase().endsWith('.dcm')) {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        setPreview(e.target?.result as string);
-      };
+      reader.onload = (e) => setPreview(e.target?.result as string);
       reader.readAsDataURL(droppedFile);
     } else {
       setPreview(null);
     }
   };
 
-  /**
-   * Upload file and get analysis
-   */
   const handleAnalyze = async () => {
     if (!file) {
-      setError('Please select a file first');
+      setError('Please select a file');
       return;
     }
-
     setLoading(true);
     setError(null);
-
     try {
       const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(`${apiBaseUrl}/api/analyze/`, {
+      formData.append('image', file);
+      const response = await fetch(`${apiBaseUrl}/api/predict/`, {
         method: 'POST',
         body: formData,
-        // Note: Don't set Content-Type header; browser will set it automatically
       });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(
-          errorData.error ||
-            `Server error: ${response.status} ${response.statusText}`
-        );
-      }
-
+      if (!response.ok) throw new Error(`Error: ${response.status}`);
       const data: AnalysisResult = await response.json();
       setResult(data);
       onAnalysisComplete?.(data);
     } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : 'Unknown error occurred';
-      setError(
-        `Failed to analyze image: ${errorMessage}. Make sure the backend is running at ${apiBaseUrl}`
-      );
+      setError(err instanceof Error ? err.message : 'Failed');
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Reset form
-   */
   const handleReset = () => {
     setFile(null);
     setPreview(null);
     setResult(null);
     setError(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      {/* Upload Area */}
+    <div className="w-full">
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className="border-2 border-dashed border-blue-300 rounded-lg p-8 text-center bg-blue-50 hover:bg-blue-100 transition-colors cursor-pointer"
+        className={`relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-300 group overflow-hidden ${
+          isDragging
+            ? 'border-cyan-400 bg-cyan-400/10 shadow-xl shadow-cyan-400/20'
+            : 'border-blue-300/50 bg-white/5 hover:border-blue-400/70 hover:bg-blue-400/5'
+        }`}
         onClick={() => fileInputRef.current?.click()}
       >
         <input
@@ -202,155 +141,123 @@ export default function ImageUpload({
           disabled={loading}
           className="hidden"
         />
-
-        <svg
-          className="mx-auto h-12 w-12 text-blue-400 mb-4"
-          stroke="currentColor"
-          fill="none"
-          viewBox="0 0 48 48"
-          aria-hidden="true"
-        >
-          <path
-            d="M28 8H12a4 4 0 00-4 4v20a4 4 0 004 4h24a4 4 0 004-4V20m-4-12l-8-8m8 8v12m-16 4l-4-4m4 4l4-4"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-
-        <p className="text-lg font-medium text-gray-900">
-          Drag & drop your image here
-        </p>
-        <p className="text-sm text-gray-600 mt-2">
-          or click to select a file
-        </p>
-        <p className="text-xs text-gray-500 mt-2">
-          Supported: JPG, PNG, GIF, BMP, DICOM (max 50MB)
-        </p>
+        <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/0 via-cyan-500/0 to-blue-500/0 group-hover:from-blue-500/5 group-hover:via-cyan-500/5 group-hover:to-blue-500/5 transition-all duration-300"></div>
+        </div>
+        <div className="relative z-10">
+          <div className="text-6xl mb-4 animate-bounce">🖼️</div>
+          <h3 className="text-2xl font-bold bg-gradient-to-r from-blue-300 to-cyan-300 bg-clip-text text-transparent mb-2">
+            Drop your MRI image
+          </h3>
+          <p className="text-blue-200 text-sm mb-4">
+            or click to select a file from your computer
+          </p>
+          <p className="text-xs text-blue-300/60">
+            Supported: JPG, PNG, GIF, BMP, DICOM • Max 50MB
+          </p>
+        </div>
       </div>
 
-      {/* File Info */}
       {file && (
-        <div className="mt-6 p-4 bg-gray-100 rounded-lg">
-          <p className="text-sm font-medium text-gray-900">Selected file:</p>
-          <p className="text-sm text-gray-600 mt-1">{file.name}</p>
-          <p className="text-xs text-gray-500 mt-1">
-            {(file.size / 1024).toFixed(2)} KB
-          </p>
+        <div className="mt-6 p-4 bg-gradient-to-r from-blue-500/20 to-cyan-500/20 backdrop-blur-md border border-blue-400/30 rounded-xl">
+          <p className="text-sm font-bold text-blue-300 mb-2">📄 Selected: {file.name}</p>
+          <p className="text-xs text-blue-300/70">{(file.size / 1024).toFixed(2)} KB</p>
         </div>
       )}
 
-      {/* Preview */}
       {preview && (
-        <div className="mt-6">
-          <p className="text-sm font-medium text-gray-900 mb-3">Preview:</p>
+        <div className="mt-8">
+          <p className="text-sm font-bold bg-gradient-to-r from-blue-300 to-cyan-300 bg-clip-text text-transparent mb-4">
+            📸 Preview
+          </p>
           <img
             src={preview}
-            alt="Selected image preview"
-            className="w-full max-h-96 object-contain rounded-lg border border-gray-300"
+            alt="Preview"
+            className="w-full max-h-96 object-contain rounded-xl border border-blue-400/30 shadow-2xl shadow-blue-500/20 hover:shadow-blue-500/40 transition-shadow"
           />
         </div>
       )}
 
-      {/* Error Message */}
       {error && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm font-medium text-red-800">Error:</p>
-          <p className="text-sm text-red-700 mt-1">{error}</p>
+        <div className="mt-6 p-4 bg-gradient-to-r from-red-500/20 to-orange-500/20 border border-red-400/50 rounded-xl backdrop-blur-md">
+          <p className="text-red-300 text-sm font-bold">⚠️ {error}</p>
         </div>
       )}
 
-      {/* Analysis Result */}
       {result && (
-        <div className="mt-6 p-6 bg-green-50 border border-green-200 rounded-lg">
-          <p className="text-lg font-semibold text-green-900 mb-3">
-            Analysis Result
-          </p>
+        <div className="mt-8 space-y-6 animate-in fade-in">
+          <div
+            className={`relative p-8 rounded-2xl border-2 backdrop-blur-xl overflow-hidden group ${
+              result.prediction === 'Normal'
+                ? 'border-green-400/50 bg-gradient-to-br from-green-500/20 to-emerald-500/10'
+                : 'border-red-400/50 bg-gradient-to-br from-red-500/20 to-orange-500/10'
+            }`}
+          >
+            <div className="relative z-10 flex items-center justify-between">
+              <div>
+                <p
+                  className={`text-xs font-bold uppercase ${
+                    result.prediction === 'Normal' ? 'text-green-300' : 'text-red-300'
+                  }`}
+                >
+                  Result
+                </p>
+                <p
+                  className={`text-5xl font-black mt-3 bg-clip-text text-transparent ${
+                    result.prediction === 'Normal'
+                      ? 'bg-gradient-to-r from-green-300 to-emerald-300'
+                      : 'bg-gradient-to-r from-red-300 to-orange-300'
+                  }`}
+                >
+                  {result.prediction}
+                </p>
+              </div>
+              <div className="text-7xl animate-pulse">
+                {result.prediction === 'Normal' ? '✅' : '⚠️'}
+              </div>
+            </div>
+          </div>
 
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-gray-700">Status:</span>
-              <span
-                className={`font-semibold px-3 py-1 rounded ${
-                  result.result === 'clean' || result.result === 'no_tumor'
-                    ? 'bg-green-200 text-green-900'
-                    : 'bg-red-200 text-red-900'
+          <div className="bg-gradient-to-r from-blue-500/20 to-cyan-500/20 backdrop-blur-xl p-6 rounded-xl border border-blue-400/30">
+            <p className="text-xs font-bold uppercase text-blue-300 mb-4">Confidence</p>
+            <div className="w-full bg-blue-900/40 rounded-full h-4 overflow-hidden border border-blue-400/30">
+              <div
+                className={`h-full transition-all duration-700 bg-gradient-to-r ${
+                  result.prediction === 'Normal'
+                    ? 'from-green-400 to-emerald-400'
+                    : 'from-red-400 to-orange-400'
                 }`}
-              >
-                {result.result.toUpperCase()}
-              </span>
+                style={{ width: `${result.confidence * 100}%` }}
+              ></div>
             </div>
-
-            <div className="flex justify-between items-center">
-              <span className="text-gray-700">Confidence:</span>
-              <div className="flex items-center gap-3">
-                <div className="w-32 bg-gray-200 rounded-full h-2">
-                  <div
-                    className={`h-2 rounded-full transition-all ${
-                      result.confidence > 0.8
-                        ? 'bg-green-500'
-                        : 'bg-yellow-500'
-                    }`}
-                    style={{ width: `${result.confidence * 100}%` }}
-                  />
-                </div>
-                <span className="font-semibold text-gray-900 min-w-fit">
-                  {(result.confidence * 100).toFixed(1)}%
-                </span>
-              </div>
-            </div>
-
-            {result.message && (
-              <div className="pt-3 border-t border-green-200">
-                <p className="text-sm text-gray-600">{result.message}</p>
-              </div>
-            )}
+            <p className="text-right text-blue-300 font-bold mt-2">
+              {(result.confidence * 100).toFixed(1)}%
+            </p>
           </div>
         </div>
       )}
 
-      {/* Action Buttons */}
-      <div className="mt-6 flex gap-3">
+      <div className="mt-6 flex gap-4">
         {!result ? (
           <>
             <button
               onClick={handleAnalyze}
               disabled={!file || loading}
-              className="flex-1 px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              className="flex-1 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:from-gray-500 disabled:to-gray-600 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg hover:shadow-blue-500/50 disabled:shadow-none flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>
-                  <svg
-                    className="animate-spin h-5 w-5"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
+                  <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full"></div>
                   Analyzing...
                 </>
               ) : (
-                'Analyze Image'
+                <>⚡ Analyze Image</>
               )}
             </button>
-
             <button
               onClick={handleReset}
               disabled={!file || loading}
-              className="px-6 py-3 bg-gray-300 text-gray-900 font-medium rounded-lg hover:bg-gray-400 disabled:bg-gray-200 disabled:cursor-not-allowed transition-colors"
+              className="px-6 py-4 border border-blue-400/50 rounded-xl text-blue-300 font-semibold hover:bg-white/5 transition-all"
             >
               Clear
             </button>
@@ -358,9 +265,9 @@ export default function ImageUpload({
         ) : (
           <button
             onClick={handleReset}
-            className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
           >
-            Analyze Another Image
+            🔄 Analyze Another
           </button>
         )}
       </div>
