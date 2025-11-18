@@ -478,6 +478,115 @@ def predict_brats_volume(
     return torch.from_numpy(mask_pred)
 
 
+def predict_brats_volume_with_image(
+    nifti_folder_path: str,
+    model_weights_path: str,
+    device: Optional[torch.device] = None,
+) -> Tuple[torch.Tensor, np.ndarray]:
+    """
+    Run inference and return both prediction mask and original volume.
+
+    Args:
+        nifti_folder_path: Path to subject folder with 4 modalities
+        model_weights_path: Path to trained model weights
+        device: Torch device
+
+    Returns:
+        Tuple of (prediction_mask, original_volume)
+        - prediction_mask: (D, H, W) binary tensor
+        - original_volume: (4, D, H, W) numpy array of input modalities
+    """
+    if device is None:
+        if torch.backends.mps.is_available():
+            device = torch.device("mps")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+
+    # Load 4 modalities
+    subject_dir = Path(nifti_folder_path)
+    subject_id = subject_dir.name
+
+    modalities = ['flair', 't1', 't1ce', 't2']
+    modality_volumes = []
+
+    for mod in modalities:
+        # Try multiple patterns to find the file
+        nii_path_gz = subject_dir / f"{subject_id}_{mod}.nii.gz"
+        nii_path = subject_dir / f"{subject_id}_{mod}.nii"
+        
+        found_file = None
+        if nii_path_gz.exists():
+            found_file = nii_path_gz
+        elif nii_path.exists():
+            found_file = nii_path
+        else:
+            # Try glob patterns for flexible naming
+            patterns = [
+                f"*_{mod}.nii.gz",
+                f"*_{mod}.nii",
+                f"*{mod}.nii.gz",
+                f"*{mod}.nii",
+            ]
+            for pattern in patterns:
+                matches = list(subject_dir.glob(pattern))
+                if matches:
+                    found_file = matches[0]
+                    break
+        
+        if found_file is None:
+            raise FileNotFoundError(f"Missing modality {mod} for {subject_id}")
+        
+        img = nib.load(str(found_file))
+        volume = img.get_fdata().astype(np.float32)
+        modality_volumes.append(volume)
+
+    # Stack modalities: (4, D, H, W)
+    image = np.stack(modality_volumes, axis=0)
+    
+    # Resize to (4, 64, 64, 64)
+    target_shape = (64, 64, 64)
+    resized_channels = []
+    for c in range(image.shape[0]):
+        resized = ndimage.zoom(
+            image[c],
+            zoom=[target_shape[i] / image.shape[i+1] for i in range(3)],
+            order=1
+        )
+        resized_channels.append(resized)
+    image_resized = np.stack(resized_channels, axis=0)
+
+    # Normalize per channel
+    for c in range(image_resized.shape[0]):
+        channel = image_resized[c]
+        mean = channel.mean()
+        std = channel.std()
+        if std > 0:
+            image_resized[c] = (channel - mean) / std
+
+    # Keep original volume for visualization
+    original_volume = image_resized.copy()
+
+    # Convert to tensor
+    image_tensor = torch.from_numpy(image_resized).unsqueeze(0).to(device)
+
+    # Load model
+    model = UNet3D(in_channels=4, out_channels=1, features=32).to(device)
+    model.load_state_dict(torch.load(model_weights_path, map_location=device))
+    model.eval()
+
+    # Inference
+    with torch.no_grad():
+        logits = model(image_tensor)
+        predictions = torch.sigmoid(logits) > 0.5
+
+    # Remove batch dimension: (1, 1, D, H, W) -> (D, H, W)
+    mask_pred = predictions.squeeze(0).squeeze(0).cpu()
+
+    return mask_pred, original_volume
+
+
 def get_tumor_presence(
     nifti_folder_path: str,
     model_weights_path: str,
