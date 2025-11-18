@@ -27,6 +27,7 @@ class BraTSPredictView(APIView):
     - Tumor presence (bool)
     - Tumor fraction (0-1)
     - Confidence scores
+    - Overlay PNG visualization (base64)
     """
     
     parser_classes = (MultiPartParser, FormParser)
@@ -54,7 +55,8 @@ class BraTSPredictView(APIView):
             'tumor_fraction': float (0-1),
             'confidence': float (0-1),
             'message': str,
-            'subject_id': str (optional)
+            'subject_id': str (optional),
+            'overlay_png': str (base64 data URI)
         }
         """
         try:
@@ -125,9 +127,9 @@ class BraTSPredictView(APIView):
                         status=status.HTTP_503_SERVICE_UNAVAILABLE
                     )
                 
-                # Run prediction
-                print(f"Running BraTS prediction on {subject_dir}")
-                result = BraTSModelManager.predict(subject_dir, model_path)
+                # Run prediction WITH VISUALIZATION
+                print(f"Running BraTS prediction with visualization on {subject_dir}")
+                result = BraTSModelManager.predict_with_visualization(subject_dir, model_path)
                 
                 # Extract subject ID from directory name
                 subject_name = Path(subject_dir).name
@@ -139,7 +141,8 @@ class BraTSPredictView(APIView):
                         'tumor_fraction': result['tumor_fraction'],
                         'confidence': 1.0 - result['tumor_fraction'] if result['has_tumor'] else result['tumor_fraction'],
                         'subject_id': subject_name,
-                        'message': f"{'Tumor detected' if result['has_tumor'] else 'No tumor detected'} ({result['tumor_fraction']:.1%} of volume)"
+                        'message': f"{'Tumor detected' if result['has_tumor'] else 'No tumor detected'} ({result['tumor_fraction']:.1%} of volume)",
+                        'overlay_png': result.get('overlay_png')  # Base64 PNG or None
                     },
                     status=status.HTTP_200_OK
                 )
