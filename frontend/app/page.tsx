@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import ImageUpload from '@/components/ImageUpload';
+import BraTS3DUpload from '@/components/BraTS3DUpload';
+import HealthCheck from '@/components/HealthCheck';
 
 interface AnalysisResult {
   prediction: 'Normal' | 'Tumor';
@@ -11,9 +13,11 @@ interface AnalysisResult {
 }
 
 export default function Home() {
+  const [analysisTab, setAnalysisTab] = useState<'2d' | '3d'>('3d');
   const [analysisHistory, setAnalysisHistory] = useState<
     Array<{ file: string; result: AnalysisResult; timestamp: string }>
   >([]);
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
 
   const handleAnalysisComplete = (result: AnalysisResult) => {
     const timestamp = new Date().toLocaleString();
@@ -24,121 +28,173 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-blue-950 to-slate-950">
       {/* Header */}
-      <header className="backdrop-blur-md bg-white/10 border-b border-white/10 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <header className="border-b border-blue-900/50 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-xl flex items-center justify-center shadow-lg">
-                <span className="text-white text-xl font-bold">🧠</span>
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-200 to-cyan-200 bg-clip-text text-transparent">
-                  Brain Tumor AI
-                </h1>
-                <p className="text-blue-200 text-sm">Advanced MRI Detection</p>
-              </div>
+            <div>
+              <h1 className="text-4xl font-bold text-white tracking-tight">
+                Medical Analysis
+              </h1>
+              <p className="text-blue-300 text-sm mt-1">Diagnostic System</p>
             </div>
-            <div className="flex items-center gap-2 bg-gradient-to-r from-green-400/20 to-emerald-400/20 border border-green-400/30 px-4 py-2 rounded-full backdrop-blur-md">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-green-200 text-sm font-medium">System Active</span>
+            <div className="flex items-center gap-3 bg-blue-900/30 border border-blue-700/50 px-4 py-2 rounded-lg backdrop-blur">
+              <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse"></div>
+              <span className="text-blue-200 text-sm font-medium">System Ready</span>
             </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Upload Section */}
           <div className="lg:col-span-2">
-            <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 hover:bg-white/15 transition-all duration-300">
-              <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-300 to-cyan-300 bg-clip-text text-transparent mb-2">
-                Upload MRI Image
-              </h2>
-              <p className="text-blue-200 mb-6">Drag, drop, or click to analyze</p>
-              <ImageUpload
-                onAnalysisComplete={handleAnalysisComplete}
-                apiBaseUrl="http://127.0.0.1:8000"
-              />
+            <div className="bg-slate-900/80 border border-blue-900/50 rounded-xl shadow-2xl p-8 backdrop-blur">
+              {/* Tab Selector */}
+              <div className="flex gap-2 mb-8">
+                <button
+                  onClick={() => setAnalysisTab('2d')}
+                  className={`px-6 py-3 font-semibold rounded-lg transition-all duration-300 ${
+                    analysisTab === '2d'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/50'
+                      : 'bg-slate-800 text-blue-300 hover:bg-slate-700 border border-blue-900/30'
+                  }`}
+                >
+                  2D Analysis
+                </button>
+                <button
+                  onClick={() => setAnalysisTab('3d')}
+                  className={`px-6 py-3 font-semibold rounded-lg transition-all duration-300 ${
+                    analysisTab === '3d'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/50'
+                      : 'bg-slate-800 text-blue-300 hover:bg-slate-700 border border-blue-900/30'
+                  }`}
+                >
+                  3D Volume
+                </button>
+              </div>
+
+              {/* 2D Upload */}
+              {analysisTab === '2d' && (
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-2">2D MRI Scan</h2>
+                  <p className="text-blue-300 mb-6">Upload single MRI slice image</p>
+                  <ImageUpload
+                    onAnalysisComplete={handleAnalysisComplete}
+                    apiBaseUrl={apiBaseUrl}
+                  />
+                </div>
+              )}
+
+              {/* 3D Upload */}
+              {analysisTab === '3d' && (
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-2">3D MRI Volume</h2>
+                  <p className="text-blue-300 mb-6">Upload complete BraTS 3D volume dataset</p>
+                  <BraTS3DUpload
+                    onResultComplete={() => {
+                      console.log('3D analysis complete');
+                    }}
+                    apiBaseUrl={apiBaseUrl}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
           {/* Info & History */}
           <div className="space-y-6">
-            {/* Info Card */}
-            <div className="bg-gradient-to-br from-blue-500/20 to-cyan-500/20 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-6 hover:border-blue-400/50 transition-all">
-              <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                <span className="text-2xl">⚡</span> How it works
-              </h3>
-              <ul className="space-y-4">
-                <li className="flex gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <span className="text-white text-sm font-bold">1</span>
-                  </div>
-                  <div>
-                    <p className="text-blue-100 font-medium">Upload Image</p>
-                    <p className="text-blue-200/70 text-xs">CT or MRI scan</p>
-                  </div>
-                </li>
-                <li className="flex gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-cyan-400 to-blue-400 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <span className="text-white text-sm font-bold">2</span>
-                  </div>
-                  <div>
-                    <p className="text-blue-100 font-medium">AI Analysis</p>
-                    <p className="text-blue-200/70 text-xs">Deep learning model</p>
-                  </div>
-                </li>
-                <li className="flex gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-emerald-400 to-cyan-400 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <span className="text-white text-sm font-bold">3</span>
-                  </div>
-                  <div>
-                    <p className="text-blue-100 font-medium">Get Results</p>
-                    <p className="text-blue-200/70 text-xs">Instant diagnosis</p>
-                  </div>
-                </li>
-              </ul>
+            {/* Info Card - Clean and minimal */}
+            <div className="bg-slate-900/80 border border-blue-900/50 rounded-xl shadow-2xl p-6 backdrop-blur">
+              <h3 className="text-lg font-bold text-white mb-4">Model Information</h3>
 
-              <div className="mt-6 pt-6 border-t border-white/10">
-                <h4 className="font-semibold text-white mb-3">📊 Model Info</h4>
-                <div className="space-y-2 text-sm">
-                  <p className="text-blue-200"><span className="text-blue-300">Model:</span> ResNet18</p>
-                  <p className="text-blue-200"><span className="text-blue-300">Accuracy:</span> 100%</p>
-                  <p className="text-blue-200"><span className="text-blue-300">Max Size:</span> 50MB</p>
+              {analysisTab === '2d' ? (
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-blue-300">Architecture</span>
+                    <span className="text-white font-medium">ResNet18 2D</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-300">Input Format</span>
+                    <span className="text-white font-medium">Single Slice</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-300">Max File Size</span>
+                    <span className="text-white font-medium">50 MB</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-300">Processing</span>
+                    <span className="text-white font-medium">Real-time</span>
+                  </div>
                 </div>
+              ) : (
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-blue-300">Architecture</span>
+                    <span className="text-white font-medium">3D U-Net</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-300">Input Modalities</span>
+                    <span className="text-white font-medium">4 (FLAIR, T1, T1ce, T2)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-300">Max File Size</span>
+                    <span className="text-white font-medium">500 MB</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-300">Validation Score</span>
+                    <span className="text-white font-medium">0.7751 Dice</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-6 pt-6 border-t border-blue-900/30">
+                <h4 className="font-semibold text-white mb-3 text-sm">Process</h4>
+                <ol className="space-y-2 text-xs text-blue-300">
+                  <li className="flex gap-2">
+                    <span className="font-bold text-blue-400">1.</span>
+                    <span>{analysisTab === '2d' ? 'Upload MRI image' : 'Upload BraTS dataset ZIP'}</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="font-bold text-blue-400">2.</span>
+                    <span>AI processes {analysisTab === '2d' ? 'slice' : '3D volume'}</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="font-bold text-blue-400">3.</span>
+                    <span>Get detailed results instantly</span>
+                  </li>
+                </ol>
               </div>
             </div>
 
             {/* Analysis History */}
             {analysisHistory.length > 0 && (
-              <div className="bg-gradient-to-br from-purple-500/20 to-pink-500/20 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-6">
-                <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                  <span className="text-2xl">📋</span> History
-                </h3>
-                <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-hide">
+              <div className="bg-slate-900/80 border border-blue-900/50 rounded-xl shadow-2xl p-6 backdrop-blur">
+                <h3 className="text-lg font-bold text-white mb-4">Analysis History</h3>
+                <div className="space-y-3 max-h-80 overflow-y-auto">
                   {analysisHistory.map((item, index) => (
                     <div
                       key={index}
-                      className="p-4 bg-white/5 backdrop-blur-md rounded-xl border border-white/10 hover:border-white/30 transition-all hover:bg-white/10 group"
+                      className="p-4 bg-slate-800/50 rounded-lg border border-blue-900/30 hover:border-blue-700/50 transition-all"
                     >
-                      <p className="text-sm font-semibold text-white group-hover:text-blue-300 transition">
+                      <p className="text-sm font-semibold text-white">
                         {item.file}
                       </p>
-                      <div className="flex justify-between items-center mt-3">
+                      <div className="flex justify-between items-center mt-2">
                         <span
-                          className={`text-xs font-bold px-3 py-1 rounded-full backdrop-blur-md transition-all ${
+                          className={`text-xs font-bold px-3 py-1 rounded-lg ${
                             item.result.prediction === 'Normal'
-                              ? 'bg-gradient-to-r from-green-400/30 to-emerald-400/30 text-green-200 border border-green-400/50'
-                              : 'bg-gradient-to-r from-red-400/30 to-orange-400/30 text-red-200 border border-red-400/50'
+                              ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-500/50'
+                              : 'bg-red-500/30 text-red-200 border border-red-500/50'
                           }`}
                         >
-                          {item.result.prediction === 'Normal' ? '✓' : '⚠'} {item.result.prediction.toUpperCase()}
+                          {item.result.prediction}
                         </span>
-                        <span className="text-xs text-blue-300 font-bold">
-                          {(item.result.confidence * 100).toFixed(1)}%
+                        <span className="text-xs text-blue-300 font-semibold">
+                          {(item.result.confidence * 100).toFixed(0)}%
                         </span>
                       </div>
                       <p className="text-xs text-blue-300/50 mt-2">
@@ -154,16 +210,19 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-white/10 mt-16 py-8 backdrop-blur-md bg-white/5">
+      <footer className="border-t border-blue-900/30 mt-12 py-6 bg-slate-900/80 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <p className="text-blue-200/70 text-sm">
-            <span className="font-semibold text-blue-300">Brain Tumor Detection AI</span> • Powered by PyTorch & Django
+          <p className="text-blue-300 text-sm">
+            Medical Analysis System • Powered by PyTorch & Next.js
           </p>
-          <p className="text-blue-200/50 text-xs mt-2">
-            🚀 Backend: <span className="text-blue-300 font-mono">http://127.0.0.1:8000</span>
+          <p className="text-blue-400/60 text-xs mt-2 font-mono">
+            API: http://127.0.0.1:8000
           </p>
         </div>
       </footer>
+
+      {/* Health Check Indicator */}
+      <HealthCheck />
     </div>
   );
 }

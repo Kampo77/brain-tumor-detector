@@ -113,8 +113,30 @@ class PingView(APIView):
     GET /ping/ → returns {"message": "API is working"}
     """
     def get(self, request):
+        import os
+        import torch
+        
+        model_path = Path(__file__).parent.parent / "model" / "model_weights.pth"
+        brats_path = Path(__file__).parent.parent / "model" / "brats2020_unet3d.pth"
+        
+        # Determine device
+        if torch.backends.mps.is_available():
+            device = "mps"
+        elif torch.cuda.is_available():
+            device = "cuda"
+        else:
+            device = "cpu"
+        
         return Response(
-            {"message": "API is working"},
+            {
+                "message": "API is working",
+                "backend": "http://127.0.0.1:8000",
+                "models": {
+                    "2d_model": model_path.exists(),
+                    "3d_model": brats_path.exists(),
+                },
+                "device": device
+            },
             status=status.HTTP_200_OK
         )
 
