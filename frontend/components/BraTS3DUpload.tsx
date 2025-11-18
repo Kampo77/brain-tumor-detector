@@ -10,6 +10,7 @@ interface BraTSResult {
   subject_id: string;
   message: string;
   error?: string;
+  overlay_png?: string;
   modalities?: Record<string, number>;
   stats?: {
     affected_regions: string;
@@ -30,6 +31,7 @@ export default function BraTS3DUpload({
   const [result, setResult] = useState<BraTSResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [imageZoomed, setImageZoomed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const validateFile = (file: File): string | null => {
@@ -113,6 +115,9 @@ export default function BraTS3DUpload({
       }
 
       const data: BraTSResult = await response.json();
+      console.log('[DEBUG] API Response:', data);
+      console.log('[DEBUG] Has overlay_png:', !!data.overlay_png);
+      console.log('[DEBUG] overlay_png length:', data.overlay_png?.length || 0);
       setResult(data);
       onResultComplete?.(data);
     } catch (err) {
@@ -232,6 +237,62 @@ export default function BraTS3DUpload({
                   </p>
                 </div>
               </div>
+
+              {/* Segmentation Overlay Image */}
+              {result.overlay_png && (
+                <div className="mt-6">
+                  <p className="text-sm font-bold text-blue-400 mb-3">Tumor Segmentation (Middle Slice)</p>
+                  <div className="relative bg-slate-900/50 rounded-xl p-4 border border-blue-900/30">
+                    <div 
+                      className="cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => setImageZoomed(!imageZoomed)}
+                    >
+                      <img
+                        src={result.overlay_png}
+                        alt="Tumor segmentation overlay"
+                        className="w-full h-auto rounded-lg"
+                        style={{ 
+                          imageRendering: 'crisp-edges',
+                          maxWidth: '100%'
+                        }}
+                      />
+                    </div>
+                    <p className="text-xs text-blue-400/70 mt-2 text-center">
+                      Red area indicates detected tumor region • Click to {imageZoomed ? 'zoom out' : 'zoom in'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Fullscreen Image Modal */}
+              {imageZoomed && result.overlay_png && (
+                <div 
+                  className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-pointer"
+                  onClick={() => setImageZoomed(false)}
+                >
+                  <div className="relative max-w-4xl w-full">
+                    <button
+                      onClick={() => setImageZoomed(false)}
+                      className="absolute -top-12 right-0 text-white hover:text-blue-400 text-xl font-bold"
+                    >
+                      ✕ Close
+                    </button>
+                    <img
+                      src={result.overlay_png}
+                      alt="Tumor segmentation overlay - enlarged"
+                      className="w-full h-auto rounded-lg shadow-2xl"
+                      style={{ 
+                        imageRendering: 'crisp-edges',
+                        maxHeight: '90vh',
+                        objectFit: 'contain'
+                      }}
+                    />
+                    <p className="text-center text-white mt-4 text-sm">
+                      🔴 Red regions show detected tumor areas
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Progress Bar */}
               <div className="mt-4">
