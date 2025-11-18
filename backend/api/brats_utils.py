@@ -5,11 +5,15 @@ import sys
 from pathlib import Path
 import tempfile
 import zipfile
+import shutil as sh
+import base64
+from io import BytesIO
+from typing import Tuple
 
 # Add project path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from brats_pipeline import UNet3D, get_tumor_presence
+from brats_pipeline import UNet3D, get_tumor_presence, predict_brats_volume_with_image
 import nibabel as nib
 import numpy as np
 
@@ -71,6 +75,161 @@ class BraTSModelManager:
         )
         
         return result
+    
+    @classmethod
+    def predict_with_visualization(cls, subject_dir: str, model_path: str) -> dict:
+        """
+        Run inference and return result with visualization overlay.
+        
+        Returns:
+            dict with keys:
+            - has_tumor: bool
+            - tumor_fraction: float
+            - overlay_png: base64 encoded PNG image (optional)
+        """
+        model, device = cls.load_model(model_path)
+        
+        try:
+            print(f"[DEBUG] Starting predict_with_visualization for {subject_dir}")
+            
+            # Get prediction mask and original volume
+            print(f"[DEBUG] Calling predict_brats_volume_with_image...")
+            mask_pred, original_volume = predict_brats_volume_with_image(
+                nifti_folder_path=subject_dir,
+                model_weights_path=model_path,
+                device=device,
+            )
+            print(f"[DEBUG] Got mask shape: {mask_pred.shape}, volume shape: {original_volume.shape}")
+            
+            # Calculate tumor presence
+            tumor_pixels = (mask_pred > 0).sum().item()
+            total_pixels = mask_pred.numel()
+            tumor_fraction = tumor_pixels / total_pixels if total_pixels > 0 else 0.0
+            print(f"[DEBUG] Tumor pixels: {tumor_pixels}/{total_pixels} = {tumor_fraction:.4f}")
+            
+            # Generate overlay
+            print(f"[DEBUG] Generating overlay PNG...")
+            overlay_base64 = cls._create_overlay_png(original_volume, mask_pred)
+            print(f"[DEBUG] Overlay generated: {'YES' if overlay_base64 else 'NO'}")
+            
+            return {
+                'has_tumor': bool(tumor_pixels > 0),
+                'tumor_fraction': tumor_fraction,
+                'overlay_png': overlay_base64
+            }
+        
+        except Exception as e:
+            print(f"[ERROR] Error in predict_with_visualization: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Fallback to prediction without visualization
+            print(f"[DEBUG] Falling back to prediction without visualization")
+            result = get_tumor_presence(
+                nifti_folder_path=subject_dir,
+                model_weights_path=model_path,
+                device=device,
+            )
+            result['overlay_png'] = None
+            return result
+    
+    @staticmethod
+    def _create_overlay_png(volume: np.ndarray, mask: torch.Tensor) -> str:
+        """
+        Create PNG overlay of middle axial slice with tumor mask.
+        
+        Args:
+            volume: (4, D, H, W) numpy array - normalized input modalities
+            mask: (D, H, W) torch tensor - binary segmentation mask
+        
+        Returns:
+            Base64 encoded PNG string with data URI prefix
+        """
+        try:
+            from PIL import Image
+            from scipy import ndimage
+            
+            # Get middle axial slice (D/2) from T2 modality (channel 3)
+            D = volume.shape[1]
+            middle_slice_idx = D // 2
+            
+            # Extract slice from T2 modality (index 3)
+            slice_img = volume[3, middle_slice_idx, :, :]  # (H, W)
+            
+            # Upscale image for better visualization (64x64 -> 512x512)
+            zoom_factor = 512 / slice_img.shape[0]
+            slice_upscaled = ndimage.zoom(slice_img, zoom_factor, order=3)  # bicubic interpolation
+            
+            # Normalize to 0-255 for visualization with contrast enhancement
+            slice_min = slice_upscaled.min()
+            slice_max = slice_upscaled.max()
+            if slice_max > slice_min:
+                slice_normalized = ((slice_upscaled - slice_min) / (slice_max - slice_min) * 255).astype(np.uint8)
+            else:
+                slice_normalized = np.zeros_like(slice_upscaled, dtype=np.uint8)
+            
+            # Extract and upscale mask slice
+            mask_np = mask.cpu().numpy()
+            mask_slice = mask_np[middle_slice_idx, :, :]  # (H, W)
+            mask_upscaled = ndimage.zoom(mask_slice.astype(float), zoom_factor, order=0)  # nearest neighbor for mask
+            mask_upscaled = (mask_upscaled > 0.5).astype(np.uint8)  # binarize after upscaling
+            
+            # Debug: print mask statistics
+            tumor_pixels = mask_upscaled.sum()
+            total_pixels = mask_upscaled.size
+            print(f"[DEBUG] Mask stats: {tumor_pixels}/{total_pixels} pixels ({tumor_pixels/total_pixels*100:.2f}%)")
+            
+            # Create RGB image from grayscale
+            height, width = slice_normalized.shape
+            rgb_img = np.zeros((height, width, 3), dtype=np.uint8)
+            rgb_img[:, :, 0] = slice_normalized  # R
+            rgb_img[:, :, 1] = slice_normalized  # G
+            rgb_img[:, :, 2] = slice_normalized  # B
+            
+            # Directly overlay red color on tumor regions (no transparency mixing)
+            if tumor_pixels > 0:
+                # Create bright red overlay (255, 0, 0) on tumor regions
+                # Mix: 30% original + 70% red for high visibility
+                red_overlay = rgb_img.copy()
+                red_overlay[mask_upscaled > 0, 0] = np.clip(rgb_img[mask_upscaled > 0, 0] * 0.3 + 255 * 0.7, 0, 255).astype(np.uint8)  # R channel
+                red_overlay[mask_upscaled > 0, 1] = (rgb_img[mask_upscaled > 0, 1] * 0.3).astype(np.uint8)  # G channel dimmed
+                red_overlay[mask_upscaled > 0, 2] = (rgb_img[mask_upscaled > 0, 2] * 0.3).astype(np.uint8)  # B channel dimmed
+                
+                # Add bright yellow/white contour for better visibility
+                try:
+                    from scipy import ndimage as ndi
+                    # Dilate mask to get border
+                    dilated = ndi.binary_dilation(mask_upscaled, iterations=2)
+                    contour = dilated & ~mask_upscaled.astype(bool)
+                    # Make contour bright yellow (255, 255, 0)
+                    red_overlay[contour, 0] = 255  # R
+                    red_overlay[contour, 1] = 255  # G
+                    red_overlay[contour, 2] = 0    # B
+                except:
+                    pass
+                
+                rgb_img = red_overlay
+            
+            # Convert to PIL Image
+            pil_img = Image.fromarray(rgb_img, mode='RGB')
+            
+            # Save to bytes buffer
+            buf = BytesIO()
+            pil_img.save(buf, format='PNG', optimize=False)
+            
+            # Encode to base64
+            buf.seek(0)
+            img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+            
+            print(f"[DEBUG] Generated overlay PNG: {len(img_base64)} bytes")
+            
+            return f"data:image/png;base64,{img_base64}"
+        
+        except Exception as e:
+            print(f"Error creating overlay PNG: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
 
 def extract_brats_zip(zip_file_path: str, extract_dir: str) -> str:
@@ -85,6 +244,8 @@ def extract_brats_zip(zip_file_path: str, extract_dir: str) -> str:
       - BraTS20_Training_001_t2.nii.gz
       - BraTS20_Training_001_seg.nii.gz (optional)
     
+    OR files directly in ZIP without folder
+    
     Returns:
         Path to extracted subject directory
     """
@@ -94,12 +255,26 @@ def extract_brats_zip(zip_file_path: str, extract_dir: str) -> str:
     with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
         zip_ref.extractall(extract_path)
     
-    # Find subject directory
-    dirs = list(extract_path.glob('BraTS20_*'))
-    if not dirs:
-        raise ValueError(f"No BraTS subject directory found in {extract_path}")
+    # Find subject directory - try multiple patterns
+    dirs = (
+        list(extract_path.glob('BraTS*')) +  # BraTS20_, BraTS28_, etc.
+        list(extract_path.glob('*Training*')) +
+        list(extract_path.glob('*Validation*'))
+    )
     
-    return str(dirs[0])
+    # Filter to get only directories
+    dirs = [d for d in dirs if d.is_dir()]
+    
+    if dirs:
+        return str(dirs[0])
+    
+    # If no subdirectory found, check if files are directly in extract_path
+    nii_files = list(extract_path.glob('*.nii*'))
+    if nii_files:
+        # Files extracted directly, return extract_path
+        return str(extract_path)
+    
+    raise ValueError(f"No BraTS subject directory or NIfTI files found in {extract_path}")
 
 
 def process_nifti_file(nifti_path: str) -> dict:
@@ -136,33 +311,53 @@ def validate_brats_subject(subject_dir: str) -> dict:
     found = {}
     missing = []
     
+    # Get all .nii and .nii.gz files
+    all_nii_files = list(subject_path.glob('*.nii*'))
+    print(f"[DEBUG] Found {len(all_nii_files)} NIfTI files in {subject_path}")
+    for f in all_nii_files:
+        print(f"  - {f.name}")
+    
     for modality in required_modalities:
-        nii_gz = subject_path / f"*_{modality}.nii.gz"
-        nii = subject_path / f"*_{modality}.nii"
+        # Try multiple patterns for flexibility
+        patterns = [
+            f"*_{modality}.nii.gz",
+            f"*_{modality}.nii",
+            f"*{modality}.nii.gz",
+            f"*{modality}.nii",
+            f"*_{modality.upper()}.nii.gz",
+            f"*_{modality.upper()}.nii",
+            f"*{modality.capitalize()}.nii.gz",
+            f"*{modality.capitalize()}.nii",
+        ]
         
-        nii_gz_files = list(subject_path.glob(f"*_{modality}.nii.gz"))
-        nii_files = list(subject_path.glob(f"*_{modality}.nii"))
+        found_file = None
+        for pattern in patterns:
+            matches = list(subject_path.glob(pattern))
+            if matches:
+                found_file = str(matches[0])
+                break
         
-        if nii_gz_files:
-            found[modality] = str(nii_gz_files[0])
-        elif nii_files:
-            found[modality] = str(nii_files[0])
+        if found_file:
+            found[modality] = found_file
+            print(f"[DEBUG] Found {modality}: {found_file}")
         else:
             missing.append(modality)
+            print(f"[DEBUG] Missing {modality}")
     
-    # Check optional
+    # Check optional segmentation
     seg_found = False
-    seg_gz_files = list(subject_path.glob("*_seg.nii.gz"))
-    seg_files = list(subject_path.glob("*_seg.nii"))
-    if seg_gz_files or seg_files:
-        seg_found = True
+    seg_patterns = ["*_seg.nii.gz", "*_seg.nii", "*seg.nii.gz", "*seg.nii"]
+    for pattern in seg_patterns:
+        if list(subject_path.glob(pattern)):
+            seg_found = True
+            break
     
     return {
         'is_valid': len(missing) == 0,
         'found_modalities': found,
         'missing_modalities': missing,
         'has_segmentation': seg_found,
-        'num_files': len(list(subject_path.glob('*.nii*'))),
+        'num_files': len(all_nii_files),
     }
 
 
@@ -192,14 +387,18 @@ def create_subject_from_nifti(nifti_file_path: str, temp_dir: str) -> str:
     subject_dir.mkdir(exist_ok=True)
     
     # Load NIFTI file
-    if nifti_file_path.endswith('.nii.gz'):
-        with gzip.open(nifti_file_path, 'rb') as f_in:
-            nifti_path = subject_dir / f"{subject_name}_t2.nii.gz"
-            with open(nifti_path, 'wb') as f_out:
-                sh.copyfileobj(f_in, f_out)
+        # Load NIFTI file
+    if nifti_file_path.endswith(".nii.gz"):
+        # просто копируем исходный gzip как есть
+        nifti_path = subject_dir / f"{subject_name}_t2.nii.gz"
+        sh.copy(nifti_file_path, nifti_path)
     else:
+        # не сжатый .nii копируем как .nii
         nifti_path = subject_dir / f"{subject_name}_t2.nii"
         sh.copy(nifti_file_path, nifti_path)
+        
+
+
     
     # Load and duplicate the volume to simulate 4 modalities
     img = nib.load(str(nifti_file_path))
