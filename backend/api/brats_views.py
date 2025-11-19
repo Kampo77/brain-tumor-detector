@@ -142,7 +142,8 @@ class BraTSPredictView(APIView):
                         'confidence': 1.0 - result['tumor_fraction'] if result['has_tumor'] else result['tumor_fraction'],
                         'subject_id': subject_name,
                         'message': f"{'Tumor detected' if result['has_tumor'] else 'No tumor detected'} ({result['tumor_fraction']:.1%} of volume)",
-                        'overlay_png': result.get('overlay_png')  # Base64 PNG or None
+                        'overlay_png': result.get('overlay_png'),  # Base64 PNG or None
+                        'brain_region': result.get('brain_region', 'Unknown')  # Brain region
                     },
                     status=status.HTTP_200_OK
                 )

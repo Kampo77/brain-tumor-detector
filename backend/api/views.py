@@ -247,3 +247,72 @@ class PredictView(APIView):
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(result, status=status.HTTP_200_OK)
+
+
+class AppointmentView(APIView):
+    """View for handling appointment bookings"""
+    
+    def post(self, request):
+        """Create a new appointment"""
+        from .models import Appointment
+        
+        try:
+            # Extract data from request
+            data = request.data
+            
+            # Create appointment
+            appointment = Appointment.objects.create(
+                doctor_id=data.get('doctor_id'),
+                doctor_name=data.get('doctor_name'),
+                patient_name=data.get('patient_name'),
+                email=data.get('email'),
+                phone=data.get('phone'),
+                appointment_date=data.get('appointment_date'),
+                appointment_time=data.get('appointment_time'),
+                notes=data.get('notes', ''),
+                status='confirmed'
+            )
+            
+            return Response({
+                'success': True,
+                'message': 'Appointment booked successfully',
+                'appointment_id': appointment.id,
+                'status': appointment.status
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    def get(self, request):
+        """Get all appointments"""
+        from .models import Appointment
+        
+        try:
+            appointments = Appointment.objects.all()
+            data = [{
+                'id': apt.id,
+                'doctor_id': apt.doctor_id,
+                'doctor_name': apt.doctor_name,
+                'patient_name': apt.patient_name,
+                'email': apt.email,
+                'phone': apt.phone,
+                'appointment_date': apt.appointment_date,
+                'appointment_time': apt.appointment_time,
+                'notes': apt.notes,
+                'status': apt.status,
+                'created_at': apt.created_at
+            } for apt in appointments]
+            
+            return Response({
+                'success': True,
+                'appointments': data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)

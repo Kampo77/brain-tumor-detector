@@ -112,10 +112,15 @@ class BraTSModelManager:
             overlay_base64 = cls._create_overlay_png(original_volume, mask_pred)
             print(f"[DEBUG] Overlay generated: {'YES' if overlay_base64 else 'NO'}")
             
+            # Determine brain region
+            brain_region = cls._get_brain_region(mask_pred)
+            print(f"[DEBUG] Tumor location: {brain_region}")
+            
             return {
                 'has_tumor': bool(tumor_pixels > 0),
                 'tumor_fraction': tumor_fraction,
-                'overlay_png': overlay_base64
+                'overlay_png': overlay_base64,
+                'brain_region': brain_region
             }
         
         except Exception as e:
@@ -131,7 +136,55 @@ class BraTSModelManager:
                 device=device,
             )
             result['overlay_png'] = None
+            result['brain_region'] = None
             return result
+    
+    @staticmethod
+    def _get_brain_region(mask: torch.Tensor) -> str:
+        """
+        Determine approximate brain region where tumor is located.
+        
+        Args:
+            mask: (D, H, W) torch tensor - binary segmentation mask
+        
+        Returns:
+            String describing brain region
+        """
+        try:
+            mask_np = mask.cpu().numpy()
+            D, H, W = mask_np.shape
+            
+            # Find tumor center of mass
+            tumor_coords = np.argwhere(mask_np > 0)
+            if len(tumor_coords) == 0:
+                return "No tumor detected"
+            
+            center_z, center_y, center_x = tumor_coords.mean(axis=0)
+            
+            # Determine hemisphere (L/R mirrored in medical imaging)
+            hemisphere = "Left" if center_x > W/2 else "Right"
+            
+            # Determine anterior/posterior (front/back)
+            if center_y < H/3:
+                anterior_posterior = "Frontal"
+            elif center_y < 2*H/3:
+                anterior_posterior = "Parietal/Central"
+            else:
+                anterior_posterior = "Occipital"
+            
+            # Determine superior/inferior (top/bottom)
+            if center_z < D/3:
+                superior_inferior = "Superior"
+            elif center_z < 2*D/3:
+                superior_inferior = "Middle"
+            else:
+                superior_inferior = "Inferior"
+            
+            return f"{hemisphere} {anterior_posterior} ({superior_inferior})"
+        
+        except Exception as e:
+            print(f"Error determining brain region: {e}")
+            return "Unknown region"
     
     @staticmethod
     def _create_overlay_png(volume: np.ndarray, mask: torch.Tensor) -> str:
@@ -149,28 +202,37 @@ class BraTSModelManager:
             from PIL import Image
             from scipy import ndimage
             
-            # Get middle axial slice (D/2) from T2 modality (channel 3)
+            # Get slice with maximum tumor area (instead of middle)
             D = volume.shape[1]
-            middle_slice_idx = D // 2
+            mask_np = mask.cpu().numpy()
+            
+            # Find slice with most tumor pixels
+            tumor_per_slice = [mask_np[i].sum() for i in range(D)]
+            best_slice_idx = int(np.argmax(tumor_per_slice))
+            
+            # Fallback to middle if no tumor found
+            if tumor_per_slice[best_slice_idx] == 0:
+                best_slice_idx = D // 2
+            
+            print(f"[DEBUG] Using slice {best_slice_idx}/{D} (max tumor: {tumor_per_slice[best_slice_idx]} pixels)")
             
             # Extract slice from T2 modality (index 3)
-            slice_img = volume[3, middle_slice_idx, :, :]  # (H, W)
+            slice_img = volume[3, best_slice_idx, :, :]  # (H, W)
             
-            # Upscale image for better visualization (64x64 -> 512x512)
-            zoom_factor = 512 / slice_img.shape[0]
+            # Upscale image for better visualization (64x64 -> 1024x1024)
+            zoom_factor = 1024 / slice_img.shape[0]
             slice_upscaled = ndimage.zoom(slice_img, zoom_factor, order=3)  # bicubic interpolation
             
             # Normalize to 0-255 for visualization with contrast enhancement
-            slice_min = slice_upscaled.min()
-            slice_max = slice_upscaled.max()
+            slice_min = np.percentile(slice_upscaled, 2)  # Remove outliers
+            slice_max = np.percentile(slice_upscaled, 98)
             if slice_max > slice_min:
-                slice_normalized = ((slice_upscaled - slice_min) / (slice_max - slice_min) * 255).astype(np.uint8)
+                slice_normalized = np.clip((slice_upscaled - slice_min) / (slice_max - slice_min) * 255, 0, 255).astype(np.uint8)
             else:
                 slice_normalized = np.zeros_like(slice_upscaled, dtype=np.uint8)
             
-            # Extract and upscale mask slice
-            mask_np = mask.cpu().numpy()
-            mask_slice = mask_np[middle_slice_idx, :, :]  # (H, W)
+            # Extract mask slice (same as image)
+            mask_slice = mask_np[best_slice_idx, :, :]  # (H, W)
             mask_upscaled = ndimage.zoom(mask_slice.astype(float), zoom_factor, order=0)  # nearest neighbor for mask
             mask_upscaled = (mask_upscaled > 0.5).astype(np.uint8)  # binarize after upscaling
             
