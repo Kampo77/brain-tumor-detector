@@ -391,9 +391,11 @@ This project was developed by a team of students from **Astana IT University** u
 |------|--------|------|
 | **Yerassyl Salimgerey** | [@Kampo77](https://github.com/Kampo77) | Team Lead, Backend Development, 2D Model training |
 | **Amankeldi Zhanatov** | [@Amankeldi2311](https://github.com/Amankeldi2311) | Backend Development, API Integration,3D Model training, Frontend Development |
-| **Lada Mulkulanova** | [@mestriw](https://github.com/mestriw) |  Report, Presentation, Documentation |
+| **Lada Mulkulanova** | [@mestriw](https://github.com/mestriw) |  Report, Documentation, Datasets |
 | **Aruzhan Zhuanysh** | [@Aruzhan Zhuanysh](https://github.com/Aruzhan-Zhuanysh) |  Report, Presentation, Documentation |
 | **Berdiyar Akbergen** | [@AkBexGod](https://github.com/AkBexGod) |  Report, Presentation, Documentation |
+
+zhandos001w in the commits is Amankeldi - It's bug because brothers laptop 
 
 **Supervisor:** Seitenov Altynbek, Senior-lecturer, Astana IT University
 
